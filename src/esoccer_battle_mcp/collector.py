@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 
-from . import api
+from . import api, snapshot, updates
 from .db import get_meta, set_meta, today_battle_day
 from .schedule import Schedule, battle_day, to_local
 
@@ -191,6 +191,7 @@ class Syncer:
         self.backfill_running = False
         self.is_collector = False
         self._last_recent = 0.0
+        self._bootstrapped = False
 
     def start(self) -> None:
         self.thread.start()
@@ -215,6 +216,7 @@ class Syncer:
             for d in (yesterday, today):
                 fetch_day(conn, self.sched, d)
             set_meta(conn, "last_sync", _now())
+            updates.check(conn)
         except Exception as e:      # hálózati hiba: a toolok a meglévő adatból válaszolnak
             set_meta(conn, "last_error", f"{_now()} recent refresh failed: {e}")
         self._last_recent = time.monotonic()
@@ -228,6 +230,10 @@ class Syncer:
                 if not self.is_collector:          # egy másik kliens folyamata gyűjt
                     self.stop.wait(LEASE_S / 2)
                     continue
+                if not self._bootstrapped:          # első indulás: adat-csomag, ha sok nap hiányzik
+                    snapshot.bootstrap(conn, self.first_day, today_battle_day())
+                    reclassify(conn, self.sched)
+                    self._bootstrapped = True
                 self._refresh_recent(conn)
                 todo = [d for d in missing_days(conn, self.first_day, today_battle_day())
                         if d < (date.fromisoformat(today_battle_day()) - timedelta(days=1)).isoformat()]

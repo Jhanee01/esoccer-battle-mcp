@@ -2,6 +2,7 @@
 
 import csv
 import difflib
+import json
 import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
 from pydantic import BaseModel, Field
 
-from . import __version__, db, stats
+from . import __version__, db, snapshot, stats, updates
 from .collector import Syncer, missing_days
 from .schedule import Schedule, to_local
 
@@ -100,6 +101,10 @@ def _frame(conn, applied: dict, sample_size: int, lo: str | None, hi: str | None
     if stale:
         notes.append("Latest matches may be missing (no successful refresh in the last 10 minutes); "
                      "see sync_status.")
+    upd = updates.status(conn)
+    if upd["update_available"]:
+        notes.append(f"A newer esoccer-battle-mcp version ({upd['latest_release']}) is available; "
+                     "see sync_status for the release notes and how to update.")
     return {"sample_size": sample_size, "filters_applied": applied, "coverage": cov,
             "stale": stale, "notes": notes + (extra_notes or [])}
 
@@ -567,6 +572,7 @@ def sync_status() -> dict:
             "ORDER BY battle_day DESC LIMIT 20").fetchall()
         return {
             "version": __version__,
+            **updates.status(conn),
             "db_path": str(db.db_path()),
             "matches_total": conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0],
             "matches_by_venue": {r["venue"]: r["n"] for r in conn.execute(
@@ -575,6 +581,8 @@ def sync_status() -> dict:
                               "venue": latest["venue"]} if latest else None),
             "coverage": _coverage(conn),
             "backfill": _backfill(conn),
+            "snapshot": {"last_complete_day": db.get_meta(conn, "snapshot_day"),
+                         "loaded_at": db.get_meta(conn, "snapshot_loaded_at")},
             "stale": _is_stale(conn),
             "unknown_venues": [dict(r) for r in conn.execute("SELECT * FROM unknown_venues")],
             "unmatched_blocks": [dict(r) for r in unmatched],
@@ -586,6 +594,16 @@ def sync_status() -> dict:
 
 
 def main() -> None:
+    import sys
+    if sys.argv[1:2] == ["build-snapshot"]:
+        # karbantartói parancs: a data-latest kiadás fájljai (battle.db.gz + manifest.json)
+        out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("snapshot")
+        conn = db.connect()
+        try:
+            print(json.dumps(snapshot.build(conn, out), indent=2))
+        finally:
+            conn.close()
+        return
     mcp.run(show_banner=False)
 
 
