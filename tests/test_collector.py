@@ -72,6 +72,48 @@ def test_refetch_does_not_duplicate(conn, fake_api):
     assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 2
 
 
+def test_finished_tournaments_not_refetched(conn, fake_api):
+    sched = Schedule.load()
+    collector.fetch_day(conn, sched, "2026-10-28")
+    fake_api.clear()
+    collector.fetch_day(conn, sched, "2026-10-28")
+    assert fake_api == []                                     # minden torna status 4 → nincs új kérés
+
+
+def test_reclassify_after_schedule_change(conn, fake_api):
+    sched = Schedule.load()
+    collector.fetch_day(conn, sched, "2026-10-28")
+    conn.execute("UPDATE matches SET turnus = NULL, session = NULL")
+    db.set_meta(conn, "menetrend_hash", "old")
+    assert collector.reclassify(conn, sched) == 2
+    assert conn.execute("SELECT COUNT(*) FROM matches WHERE turnus IS NULL").fetchone()[0] == 0
+    assert collector.reclassify(conn, sched) == 0             # a hash már egyezik
+
+
+def test_missing_days(conn):
+    conn.executemany("INSERT INTO days VALUES (?, ?, '')", [("2026-10-28", 1), ("2026-10-27", 0)])
+    assert collector.missing_days(conn, "2026-10-26", "2026-10-29") == ["2026-10-29", "2026-10-27", "2026-10-26"]
+
+
+def test_syncer_backfills_and_stops(tmp_path, fake_api):
+    import time
+    path = tmp_path / "s.db"
+    syncer = collector.Syncer(Schedule.load(), "2026-10-20", lambda: db.connect(path))
+    syncer.start()
+    deadline = time.monotonic() + 20
+    conn = db.connect(path)
+    while time.monotonic() < deadline:
+        if db.get_meta(conn, "last_sync") and not syncer.backfill_running and \
+                conn.execute("SELECT COUNT(*) FROM days").fetchone()[0] >= 9:
+            break
+        time.sleep(0.1)
+    syncer.close()
+    syncer.thread.join(5)
+    assert not syncer.thread.is_alive()
+    assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] >= 2   # 10-28 betöltve
+    assert db.get_meta(conn, "menetrend_hash") == Schedule.load().digest
+
+
 def test_bad_api_format_is_skipped(conn, fake_api, monkeypatch):
     broken = [{"id": 99, "date": "2026-10-28T06:00:00Z", "status_id": 3, "participant1": {}}]
     monkeypatch.setitem(MATCHES, 1, broken)

@@ -1,10 +1,12 @@
 """Download Battle days from the API into the local database."""
 
 import sqlite3
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from . import api
-from .db import set_meta, today_battle_day
+from .db import get_meta, set_meta, today_battle_day
 from .schedule import Schedule, battle_day, to_local
 
 FINISHED_MATCH = 3
@@ -77,6 +79,10 @@ def fetch_day(conn: sqlite3.Connection, sched: Schedule, day: str) -> dict:
             if battle_day(t.get("token_international"), to_local(t["start_date"])) == day:
                 tournaments.append(t)
 
+    # már lezárt és elmentett tornák meccseit nem kérjük le újra (a friss pótlás így gyors)
+    done = {r[0] for r in conn.execute(
+        "SELECT id FROM tournaments WHERE battle_day = ? AND status = ?", (day, FINISHED_TOURNAMENT))}
+
     stats = {"battle_day": day, "tournaments": 0, "matches": 0, "skipped": 0, "unmatched_blocks": 0}
     all_finished = bool(tournaments)
     for t in tournaments:
@@ -85,6 +91,8 @@ def fetch_day(conn: sqlite3.Connection, sched: Schedule, day: str) -> dict:
             continue
         if venue not in sched.venues:
             _note_unknown_venue(conn, venue, day)
+            continue
+        if t["id"] in done:
             continue
         matches = api.matches_of(t["id"])
         if not all(_valid_match(m) for m in matches):
@@ -107,3 +115,82 @@ def fetch_day(conn: sqlite3.Connection, sched: Schedule, day: str) -> dict:
     conn.commit()
     stats["complete"] = complete
     return stats
+
+
+def reclassify(conn: sqlite3.Connection, sched: Schedule) -> int:
+    """Ha a menetrend változott (új kiadás), a tárolt meccsek turnusát/napszakát újraszámolja."""
+    if get_meta(conn, "menetrend_hash") == sched.digest:
+        return 0
+    n = 0
+    for t in conn.execute("SELECT id, venue, battle_day, start_local FROM tournaments").fetchall():
+        turnus, session = sched.classify(t["venue"], t["battle_day"], t["start_local"][11:16])
+        n += conn.execute("UPDATE matches SET turnus = ?, session = ?, format = ? WHERE tournament_id = ?",
+                          (turnus, session, sched.format_of(t["venue"]), t["id"])).rowcount
+    conn.commit()
+    set_meta(conn, "menetrend_hash", sched.digest)
+    return n
+
+
+def missing_days(conn: sqlite3.Connection, first: str, today: str) -> list[str]:
+    """A még nem lezárt Battle-napok a legfrissebbtől visszafelé."""
+    complete = {r[0] for r in conn.execute("SELECT battle_day FROM days WHERE complete = 1")}
+    d, lo, out = date.fromisoformat(today), date.fromisoformat(first), []
+    while d >= lo:
+        if d.isoformat() not in complete:
+            out.append(d.isoformat())
+        d -= timedelta(days=1)
+    return out
+
+
+class Syncer:
+    """Háttérszál: 3 percenként friss pótlás (ma + tegnap), közben visszatöltés FIRST_DAY-ig."""
+
+    RECENT_EVERY_S = 180
+
+    def __init__(self, sched: Schedule, first_day: str, connect):
+        self.sched, self.first_day, self.connect = sched, first_day, connect
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="esoccer-battle-sync", daemon=True)
+        self.backfill_running = False
+        self._last_recent = 0.0
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop.set()
+
+    def _refresh_recent(self, conn) -> None:
+        today = today_battle_day()
+        yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
+        try:
+            for d in (yesterday, today):
+                fetch_day(conn, self.sched, d)
+            set_meta(conn, "last_sync", _now())
+        except Exception as e:      # hálózati hiba: a toolok a meglévő adatból válaszolnak
+            set_meta(conn, "last_error", f"{_now()} recent refresh failed: {e}")
+        self._last_recent = time.monotonic()
+
+    def _run(self) -> None:
+        conn = self.connect()
+        try:
+            reclassify(conn, self.sched)
+            while not self.stop.is_set():
+                self._refresh_recent(conn)
+                todo = [d for d in missing_days(conn, self.first_day, today_battle_day())
+                        if d < (date.fromisoformat(today_battle_day()) - timedelta(days=1)).isoformat()]
+                self.backfill_running = bool(todo)
+                for d in todo:
+                    if self.stop.is_set():
+                        return
+                    if time.monotonic() - self._last_recent > self.RECENT_EVERY_S:
+                        self._refresh_recent(conn)
+                    try:
+                        fetch_day(conn, self.sched, d)
+                    except Exception as e:
+                        set_meta(conn, "last_error", f"{_now()} backfill {d} failed: {e}")
+                        self.stop.wait(30)
+                self.backfill_running = False
+                self.stop.wait(max(0.0, self.RECENT_EVERY_S - (time.monotonic() - self._last_recent)))
+        finally:
+            conn.close()

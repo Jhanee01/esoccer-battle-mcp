@@ -1,20 +1,43 @@
 """FastMCP server exposing Esoccer Battle match data."""
 
+import os
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastmcp import FastMCP
+from fastmcp.server.lifespan import lifespan
 from pydantic import Field
 
 from . import __version__, db
+from .collector import Syncer, missing_days
 from .schedule import Schedule, to_local
 
 FIRST_DAY = "2025-11-11"
 MAX_ROWS = 500
+STALE_AFTER = timedelta(minutes=10)
 
 SCHED = Schedule.load()
+SYNCER: Syncer | None = None
+
+
+@lifespan
+async def background_sync(server):
+    """A háttér-gyűjtés a szerverrel együtt indul és áll le (ESOCCER_BATTLE_NO_SYNC=1 kikapcsolja)."""
+    global SYNCER
+    if os.environ.get("ESOCCER_BATTLE_NO_SYNC") != "1":
+        SYNCER = Syncer(SCHED, FIRST_DAY, db.connect)
+        SYNCER.start()
+    try:
+        yield {}
+    finally:
+        if SYNCER:
+            SYNCER.close()
+            SYNCER = None
+
 
 mcp = FastMCP(
     "esoccer-battle",
+    lifespan=background_sync,
     instructions=(
         "Esoccer Battle (FIFA/EA FC esports) 8 and 12 minute match results, collected from the public "
         "Battle API since 2025-11-11. Use it to research and measure betting-strategy ideas. There are no "
@@ -66,8 +89,29 @@ def _frame(conn, applied: dict, sample_size: int, lo: str | None, hi: str | None
     cov = _coverage(conn)
     if not cov["complete"]:
         notes.append(f"Data currently only goes back to {cov['from']}; the backfill is still running.")
+    stale = _is_stale(conn)
+    if stale:
+        notes.append("Latest matches may be missing (no successful refresh in the last 10 minutes); "
+                     "see sync_status.")
     return {"sample_size": sample_size, "filters_applied": applied, "coverage": cov,
-            "stale": False, "notes": notes + (extra_notes or [])}
+            "stale": stale, "notes": notes + (extra_notes or [])}
+
+
+def _is_stale(conn) -> bool:
+    last = db.get_meta(conn, "last_sync")
+    if not last:
+        return True
+    return datetime.now(timezone.utc) - datetime.fromisoformat(last) > STALE_AFTER
+
+
+def _backfill(conn) -> dict:
+    today = db.today_battle_day()
+    total = (date.fromisoformat(today) - date.fromisoformat(FIRST_DAY)).days + 1
+    missing = missing_days(conn, FIRST_DAY, today)
+    return {"first_day": FIRST_DAY, "days_total": total, "days_missing": len(missing),
+            "progress_pct": round(100 * (total - len(missing)) / total, 1),
+            "running": bool(SYNCER and SYNCER.backfill_running),
+            "sync_thread_alive": bool(SYNCER and SYNCER.thread.is_alive())}
 
 
 def _side_filter(column_pair: tuple[str, str], value: str) -> tuple[str, list]:
@@ -147,7 +191,8 @@ def sync_status() -> dict:
             "latest_match": ({"kickoff_local": to_local(latest["start_utc"]).strftime("%Y-%m-%d %H:%M"),
                               "venue": latest["venue"]} if latest else None),
             "coverage": _coverage(conn),
-            "days_complete": conn.execute("SELECT COUNT(*) FROM days WHERE complete = 1").fetchone()[0],
+            "backfill": _backfill(conn),
+            "stale": _is_stale(conn),
             "unknown_venues": [dict(r) for r in conn.execute("SELECT * FROM unknown_venues")],
             "unmatched_blocks": [dict(r) for r in unmatched],
             "last_sync": db.get_meta(conn, "last_sync"),
@@ -158,7 +203,7 @@ def sync_status() -> dict:
 
 
 def main() -> None:
-    mcp.run()
+    mcp.run(show_banner=False)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 import os
 import re
 import sqlite3
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -57,7 +58,16 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # a WAL-váltás nem várakozik zárolásnál (párhuzamos első megnyitás) → csak ha kell, újrapróbálva
+    for attempt in range(50):
+        try:
+            if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError:
+            if attempt == 49:
+                raise
+            time.sleep(0.1)
     conn.executescript(SCHEMA)
     if get_meta(conn, "schema_version") is None:
         set_meta(conn, "schema_version", str(SCHEMA_VERSION))
