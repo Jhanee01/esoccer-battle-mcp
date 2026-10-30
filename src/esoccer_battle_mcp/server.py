@@ -1,5 +1,6 @@
 """FastMCP server exposing Esoccer Battle match data."""
 
+import difflib
 import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
@@ -116,6 +117,29 @@ def _backfill(conn) -> dict:
             "this_process_collects": bool(SYNCER and SYNCER.is_collector)}
 
 
+TEAM_KEYS = {"team", "team_a", "team_b", "opponent_team"}
+
+
+def _did_you_mean(conn, **names: str | None) -> dict:
+    """Az adatbázisban nem létező játékos-/csapatnevekhez hasonló nevek (elírás, kis/nagybetű)."""
+    out = {}
+    for key, value in names.items():
+        if not value:
+            continue
+        cols = ("team1", "team2") if key in TEAM_KEYS else ("player1", "player2")
+        exists = conn.execute(f"SELECT 1 FROM matches WHERE {cols[0]} = ? COLLATE NOCASE "
+                              f"OR {cols[1]} = ? COLLATE NOCASE LIMIT 1", (value, value)).fetchone()
+        if exists:
+            continue
+        pool = {r[0] for r in conn.execute(f"SELECT {cols[0]} FROM matches UNION SELECT {cols[1]} FROM matches")}
+        lower = {n.lower(): n for n in pool if n}
+        v = value.lower()
+        close = [lower[n] for n in difflib.get_close_matches(v, lower, n=5, cutoff=0.6)]
+        contains = sorted(n for k, n in lower.items() if v in k and n not in close)[:5]
+        out[key] = {"not_found": value, "suggestions": close + contains}
+    return out
+
+
 def _side_filter(column_pair: tuple[str, str], value: str) -> tuple[str, list]:
     a, b = column_pair
     return f"({a} = ? COLLATE NOCASE OR {b} = ? COLLATE NOCASE)", [value, value]
@@ -166,6 +190,10 @@ def query_matches(
         rows = conn.execute(f"SELECT {MATCH_COLUMNS} FROM matches WHERE {where} "
                             f"ORDER BY start_utc {direction} LIMIT ?", params + [limit]).fetchall()
         out = _frame(conn, applied, total, lo, hi)
+        if total == 0:
+            out["did_you_mean"] = _did_you_mean(
+                conn, player=player, team=team,
+                **({"opponent": opponent} if player else {"opponent_team": opponent}))
         out["matches"] = [dict(r) for r in rows]
         out["truncated"] = total > len(rows)
         return out

@@ -63,6 +63,21 @@ def test_invalid_input_message():
         call("query_matches", {"venue": "Hillsborough"})
 
 
+def test_did_you_mean():
+    r = call("query_matches", {"player": "Alpah"})
+    assert r["sample_size"] == 0
+    assert r["did_you_mean"]["player"]["suggestions"][0] == "Alpha"
+    r = call("query_matches", {"team": "Aja"})
+    assert "Ajax" in r["did_you_mean"]["team"]["suggestions"]
+    r = call("query_matches", {"player": "Alpha", "opponent": "Delta"})   # létező nevek, csak nincs közös meccs
+    assert r["sample_size"] == 0 and r["did_you_mean"] == {}
+    assert "did_you_mean" not in call("query_matches", {"player": "Alpha"})
+
+
+def test_small_sample_note():
+    assert any("Small sample" in n for n in call("query_matches", {"player": "Alpha"})["notes"])
+
+
 def test_notes_follow_actual_sample():
     notes = call("query_matches", {"venue": "Wembley"})["notes"]        # a minta csak 10-27…10-28
     assert not any(n.startswith("Window crosses") for n in notes)
