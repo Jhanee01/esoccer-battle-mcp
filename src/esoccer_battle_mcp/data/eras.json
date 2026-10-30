@@ -1,5 +1,25 @@
 {
   "_description": "Era log. 'eras' are hard boundaries (game version); queries default to the current era. 'events' are smaller changes that only produce warnings when a query window crosses them. Maintained by hand; every change ships in a new release.",
-  "eras": [],
-  "events": []
+  "eras": [
+    {"id": "FC26", "from": "2025-11-11", "to": null,
+     "description": "EA FC 26 season of the Battle leagues."}
+  ],
+  "events": [
+    {"date": "2026-03-05", "venues": ["Stamford Bridge", "Old Trafford", "Wembley"],
+     "description": "Schedule shift: block start times moved earlier."},
+    {"date": "2026-03-17", "venues": ["Stamford Bridge"],
+     "description": "Stamford Bridge expanded from 4 day blocks to 11 blocks (turnus 1-11)."},
+    {"date": "2026-04-03", "venues": ["Stamford Bridge", "Old Trafford"],
+     "description": "Night blocks (turnus 8-11) start 10 minutes earlier."},
+    {"date": "2026-06-13", "until": "2026-08-04", "venues": ["Old Trafford", "Wembley"],
+     "description": "World Cup leagues with fixed player-team assignment: team stats effectively measure the player."},
+    {"date": "2026-08-05", "venues": ["Old Trafford", "Wembley"],
+     "description": "World Cup leagues switched to daily rotating player-team assignment."},
+    {"date": "2026-08-20", "venues": ["San Siro", "Bernabeu"],
+     "description": "Latest league starts (8 min): San Siro day blocks, Bernabeu afternoon blocks."},
+    {"date": "2026-09-22", "venues": ["San Siro", "Bernabeu"],
+     "description": "Latest league afternoon blocks moved from Bernabeu to San Siro."},
+    {"date": "2026-10-16", "venues": ["San Siro"],
+     "description": "Latest league expanded to 8 blocks (turnus 1-8) with earlier morning starts."}
+  ]
 }
