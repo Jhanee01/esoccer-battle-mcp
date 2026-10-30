@@ -20,6 +20,10 @@ MAX_ROWS = 500
 STALE_AFTER = timedelta(minutes=10)
 
 SCHED = Schedule.load()
+
+# a kliensek (Codex, Claude Desktop) a csak olvasó toolokat jóváhagyás nélkül futtathatják
+READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
+WRITES_FILE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 SYNCER: Syncer | None = None
 
 
@@ -151,7 +155,7 @@ MATCH_COLUMNS = ("battle_day, local_date, local_time, venue, format, turnus, ses
                  "player1, team1, player2, team2, score1, score2")
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def query_matches(
     player: Annotated[str | None, Field(description="Player nickname (either side)")] = None,
     team: Annotated[str | None, Field(description="Team name (either side)")] = None,
@@ -201,7 +205,7 @@ def _export_path(path: str | None) -> Path:
     return target
 
 
-@mcp.tool
+@mcp.tool(annotations=WRITES_FILE)
 def export_matches(
     player: Annotated[str | None, Field(description="Player nickname (either side)")] = None,
     team: Annotated[str | None, Field(description="Team name (either side)")] = None,
@@ -294,7 +298,7 @@ def _h2h(cols, a, b, last_n, filters, keys) -> dict:
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def player_h2h(
     player_a: Annotated[str, Field(description="First player nickname")],
     player_b: Annotated[str, Field(description="Second player nickname")],
@@ -310,7 +314,7 @@ def player_h2h(
                 ("player_a", "player_b"))
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def team_h2h(
     team_a: Annotated[str, Field(description="First team name")],
     team_b: Annotated[str, Field(description="Second team name")],
@@ -359,7 +363,7 @@ def _subject_rows(conn, filters: tuple, player: str | None, team: str | None,
     return rows, applied, span
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def market_stats(
     market: Annotated[Literal["over_under", "btts", "1x2"], Field(description="Market to measure")],
     line: Annotated[float | None, Field(description="Total-goals line for over_under, e.g. 6.5. "
@@ -401,7 +405,7 @@ def market_stats(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def player_form(
     player: Annotated[str, Field(description="Player nickname")],
     last_n: Annotated[int, Field(description="Window size: the last N matches vs the N before them")] = 20,
@@ -440,7 +444,7 @@ class Condition(BaseModel):
     line: float | None = Field(None, description="Line for *_over_rate (defaults to the rule's line)")
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def test_rule(
     market: Literal["over_under", "btts", "1x2"],
     pick: Annotated[Literal["over", "under", "yes", "no", "home", "draw", "away"],
@@ -516,7 +520,7 @@ def test_rule(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def data_notes(venue: Venue = None) -> dict:
     """Context needed to interpret the data: eras (game versions), dated events (schedule changes,
     new leagues, fixed player-team periods), venues with format and current block schedule, and the
@@ -550,7 +554,7 @@ def data_notes(venue: Venue = None) -> dict:
     }
 
 
-@mcp.tool
+@mcp.tool(annotations=READ_ONLY)
 def sync_status() -> dict:
     """State of the local database: freshness, coverage, unknown venues, unmatched blocks and
     the last error. Use when data freshness is in doubt or a response was marked stale."""

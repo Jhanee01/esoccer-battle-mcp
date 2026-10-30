@@ -41,6 +41,16 @@ def test_tools_listed():
     assert {"query_matches", "sync_status"} <= asyncio.run(run())
 
 
+def test_read_only_annotations():
+    async def run():
+        async with Client(mcp) as c:
+            return {t.name: t.annotations for t in await c.list_tools()}
+    ann = asyncio.run(run())
+    assert len(ann) == 9
+    assert all(a.read_only_hint for name, a in ann.items() if name != "export_matches")
+    assert ann["export_matches"].read_only_hint is False and ann["export_matches"].destructive_hint is False
+
+
 def test_query_matches_player_and_opponent():
     r = call("query_matches", {"player": "alpha"})          # kis/nagybetű-független
     assert r["sample_size"] == 3
