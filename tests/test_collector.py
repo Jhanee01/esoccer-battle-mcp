@@ -135,3 +135,24 @@ def test_bad_api_format_is_skipped(conn, fake_api, monkeypatch):
     assert stats["skipped"] == 1 and stats["complete"] is False
     assert "unexpected API format" in db.get_meta(conn, "last_error")
     assert conn.execute("SELECT COUNT(*) FROM matches WHERE id = 99").fetchone()[0] == 0
+
+
+def test_other_process_can_write_during_fetch(tmp_path, fake_api, monkeypatch):
+    import sqlite3
+    path = tmp_path / "w.db"
+    conn, other = db.connect(path), db.connect(path)
+    other.execute("PRAGMA busy_timeout = 100")
+    real = api.matches_of
+    writes = []
+
+    def matches_of(tid):              # a második torna letöltése közben a másik folyamat ír
+        if tid == 4:
+            try:
+                db.set_meta(other, "probe", "ok")
+                writes.append("ok")
+            except sqlite3.OperationalError as e:
+                writes.append(str(e))
+        return real(tid)
+    monkeypatch.setattr(api, "matches_of", matches_of)
+    collector.fetch_day(conn, Schedule.load(), "2026-10-28")
+    assert writes == ["ok"]

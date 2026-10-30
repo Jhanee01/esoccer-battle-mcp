@@ -95,6 +95,7 @@ def fetch_day(conn: sqlite3.Connection, sched: Schedule, day: str) -> dict:
             continue
         if t["id"] in done:
             continue
+        conn.commit()          # API-hívás alatt ne legyen nyitott írás: a többi folyamat (lease) írhasson
         matches = api.matches_of(t["id"])
         if not all(_valid_match(m) for m in matches):
             set_meta(conn, "last_error", f"{_now()} unexpected API format in tournament {t['id']} ({day})")
@@ -202,7 +203,10 @@ class Syncer:
         try:
             while not self.stop.wait(LEASE_S / 4):
                 if self.is_collector:
-                    self.is_collector = renew_lease(conn, self.owner)
+                    try:
+                        self.is_collector = renew_lease(conn, self.owner)
+                    except sqlite3.OperationalError:     # foglalt adatbázis: a következő körben újra
+                        pass
         finally:
             conn.close()
 
