@@ -13,7 +13,7 @@ from fastmcp.server.lifespan import lifespan
 from pydantic import BaseModel, Field
 
 from . import __version__, db, snapshot, stats, updates
-from .collector import Syncer, missing_days
+from .collector import Syncer, fetch_day, missing_days, reclassify
 from .schedule import Schedule, to_local
 
 FIRST_DAY = "2025-11-11"
@@ -595,6 +595,18 @@ def sync_status() -> dict:
 
 def main() -> None:
     import sys
+    if sys.argv[1:2] == ["sync"]:
+        # karbantartói parancs (Actions): előző csomag + hiányzó napok az API-ból, majd kilép
+        conn = db.connect()
+        try:
+            today = db.today_battle_day()
+            snapshot.bootstrap(conn, FIRST_DAY, today)
+            reclassify(conn, SCHED)
+            for d in missing_days(conn, FIRST_DAY, today):
+                print(d, fetch_day(conn, SCHED, d), flush=True)
+        finally:
+            conn.close()
+        return
     if sys.argv[1:2] == ["build-snapshot"]:
         # karbantartói parancs: a data-latest kiadás fájljai (battle.db.gz + manifest.json)
         out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("snapshot")

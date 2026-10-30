@@ -1,0 +1,31 @@
+name: data snapshot
+
+on:
+  schedule:
+    - cron: "30 7 */5 * *"     # every 5 days, after the Battle day has closed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ESOCCER_BATTLE_DB: ${{ github.workspace }}/work/battle.db
+      ESOCCER_BATTLE_NO_UPDATE_CHECK: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync (previous snapshot + missing days from the API)
+        run: uv run esoccer-battle-mcp sync
+      - name: Build snapshot
+        run: uv run esoccer-battle-mcp build-snapshot out
+      - name: Upload to the data-latest release
+        run: |
+          gh release view data-latest >/dev/null 2>&1 || \
+            gh release create data-latest --prerelease --title "Data snapshot" \
+              --notes "Database snapshot used on first start. Updated automatically every 5 days."
+          gh release upload data-latest out/battle.db.gz out/manifest.json --clobber
