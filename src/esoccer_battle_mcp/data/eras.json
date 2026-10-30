@@ -1,0 +1,5 @@
+{
+  "_description": "Era log. 'eras' are hard boundaries (game version); queries default to the current era. 'events' are smaller changes that only produce warnings when a query window crosses them. Maintained by hand; every change ships in a new release.",
+  "eras": [],
+  "events": []
+}

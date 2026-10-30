@@ -1,0 +1,31 @@
+[project]
+name = "esoccer-battle-mcp"
+version = "0.1.0"
+description = "MCP server with Esoccer Battle (8 and 12 minute) match results for strategy research"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=4.1,<5",
+    "tzdata; sys_platform == 'win32'",
+]
+
+[project.scripts]
+esoccer-battle-mcp = "esoccer_battle_mcp.server:main"
+
+[project.urls]
+Repository = "https://github.com/Jhanee01/esoccer-battle-mcp"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/esoccer_battle_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

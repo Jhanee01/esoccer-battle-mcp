@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# local data — never commit
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+exports/
+.env
