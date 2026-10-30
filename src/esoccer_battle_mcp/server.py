@@ -1,8 +1,10 @@
 """FastMCP server exposing Esoccer Battle match data."""
 
+import csv
 import difflib
 import os
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastmcp import FastMCP
@@ -162,8 +164,82 @@ def query_matches(
 ) -> dict:
     """Raw match rows. Use when the other tools do not answer the question directly;
     for aggregates prefer player_h2h, team_h2h, market_stats or player_form."""
-    where, params, applied = _filters(since, until, last_days, venue, format, session, turnus,
-                                      time_from, time_to, era)
+    where, params, applied = _match_where(player, team, opponent, (
+        since, until, last_days, venue, format, session, turnus, time_from, time_to, era))
+    limit = max(1, min(limit, MAX_ROWS))
+    direction = "DESC" if order == "newest" else "ASC"
+    conn = db.connect()
+    try:
+        total, lo, hi = _span(conn, where, params)
+        rows = conn.execute(f"SELECT {MATCH_COLUMNS} FROM matches WHERE {where} "
+                            f"ORDER BY start_utc {direction} LIMIT ?", params + [limit]).fetchall()
+        out = _frame(conn, applied, total, lo, hi)
+        if total == 0:
+            out["did_you_mean"] = _did_you_mean(
+                conn, player=player, team=team,
+                **({"opponent": opponent} if player else {"opponent_team": opponent}))
+        out["matches"] = [dict(r) for r in rows]
+        out["truncated"] = total > len(rows)
+        return out
+    finally:
+        conn.close()
+
+
+def _export_path(path: str | None) -> Path:
+    if path:
+        target = Path(path).expanduser()
+        if target.suffix.lower() != ".csv":
+            target = target / f"battle_matches_{datetime.now():%Y%m%d_%H%M%S}.csv"
+    else:
+        target = (Path.home() / "Downloads" / "esoccer-battle-exports"
+                  / f"battle_matches_{datetime.now():%Y%m%d_%H%M%S}.csv")
+    stem, i = target.stem, 1
+    while target.exists():                     # létező fájlt soha nem írunk felül
+        target = target.with_name(f"{stem}_{i}.csv")
+        i += 1
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+@mcp.tool
+def export_matches(
+    player: Annotated[str | None, Field(description="Player nickname (either side)")] = None,
+    team: Annotated[str | None, Field(description="Team name (either side)")] = None,
+    opponent: Annotated[str | None, Field(description="Opponent player (with player) or team (with team)")] = None,
+    path: Annotated[str | None, Field(description="Target .csv file or folder; default "
+                                                  "~/Downloads/esoccer-battle-exports/")] = None,
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Write every match matching the filters to a CSV file on the user's computer (no row limit),
+    oldest first, for analysis with the user's own code or a spreadsheet. Never overwrites a file."""
+    where, params, applied = _match_where(player, team, opponent, (
+        since, until, last_days, venue, format, session, turnus, time_from, time_to, era))
+    columns = [c.strip() for c in MATCH_COLUMNS.split(",")]
+    conn = db.connect()
+    try:
+        rows = conn.execute(f"SELECT {MATCH_COLUMNS} FROM matches WHERE {where} ORDER BY start_utc",
+                            params).fetchall()
+        if not rows:
+            out = _frame(conn, applied, 0, None, None)
+            out["did_you_mean"] = _did_you_mean(conn, player=player, team=team)
+            out["path"] = None
+            return out
+        target = _export_path(path)
+        with target.open("w", newline="", encoding="utf-8-sig") as f:   # BOM: Excel így jól nyitja
+            w = csv.writer(f)
+            w.writerow(columns)
+            w.writerows(tuple(r) for r in rows)
+        out = _frame(conn, applied, len(rows), rows[0]["battle_day"], rows[-1]["battle_day"])
+        out.update({"path": str(target), "rows": len(rows), "columns": columns})
+        return out
+    finally:
+        conn.close()
+
+
+def _match_where(player, team, opponent, filters: tuple) -> tuple[str, list, dict]:
+    where, params, applied = _filters(*filters)
     for value, cols, key in ((player, ("player1", "player2"), "player"), (team, ("team1", "team2"), "team")):
         if value:
             clause, p = _side_filter(cols, value)
@@ -182,23 +258,7 @@ def query_matches(
                       " OR (team2 = ? COLLATE NOCASE AND team1 = ? COLLATE NOCASE))")
             params += [team, opponent, team, opponent]
         applied["opponent"] = opponent
-    limit = max(1, min(limit, MAX_ROWS))
-    direction = "DESC" if order == "newest" else "ASC"
-    conn = db.connect()
-    try:
-        total, lo, hi = _span(conn, where, params)
-        rows = conn.execute(f"SELECT {MATCH_COLUMNS} FROM matches WHERE {where} "
-                            f"ORDER BY start_utc {direction} LIMIT ?", params + [limit]).fetchall()
-        out = _frame(conn, applied, total, lo, hi)
-        if total == 0:
-            out["did_you_mean"] = _did_you_mean(
-                conn, player=player, team=team,
-                **({"opponent": opponent} if player else {"opponent_team": opponent}))
-        out["matches"] = [dict(r) for r in rows]
-        out["truncated"] = total > len(rows)
-        return out
-    finally:
-        conn.close()
+    return where, params, applied
 
 
 ROW_COLUMNS = ("battle_day, local_date, local_time, venue, format, turnus, session, "

@@ -160,6 +160,27 @@ def test_test_rule_invalid(args, msg):
         call("test_rule", args)
 
 
+def test_export_matches(tmp_path):
+    import csv as _csv
+    target = tmp_path / "out.csv"
+    r = call("export_matches", {"player": "Alpha", "path": str(target)})
+    assert r["rows"] == call("query_matches", {"player": "Alpha"})["sample_size"] == 3
+    raw = target.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")                     # UTF-8 BOM az Excelnek
+    rows = list(_csv.DictReader(target.open(encoding="utf-8-sig")))
+    assert [x["battle_day"] for x in rows] == ["2026-10-27", "2026-10-27", "2026-10-28"]   # legrégebbi elöl
+    r2 = call("export_matches", {"player": "Alpha", "path": str(target)})
+    assert r2["path"] != str(target) and target.read_bytes() == raw   # nem írta felül
+    r3 = call("export_matches", {"path": str(tmp_path / "dir")})       # mappa → időbélyeges név
+    assert r3["path"].endswith(".csv") and r3["rows"] == 4
+
+
+def test_export_nothing(tmp_path):
+    r = call("export_matches", {"player": "Alpah", "path": str(tmp_path / "x.csv")})
+    assert r["path"] is None and r["did_you_mean"]["player"]["suggestions"] == ["Alpha"]
+    assert not (tmp_path / "x.csv").exists()
+
+
 def test_h2h_not_found():
     r = call("player_h2h", {"player_a": "Alpah", "player_b": "Beta"})
     assert r["sample_size"] == 0 and r["did_you_mean"]["player_a"]["suggestions"] == ["Alpha"]
