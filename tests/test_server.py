@@ -123,6 +123,18 @@ def test_player_form():
     assert r["matches"][0]["score"] == "2-2" and r["matches"][0]["opponent"] == "Gamma"
 
 
+def test_data_notes():
+    r = call("data_notes")
+    assert r["current_era"] == "FC26" and len(r["events"]) == 8
+    assert r["venues"]["Anfield"]["format"] == "12min"
+    sb = r["venues"]["Stamford Bridge"]
+    assert sb["schedule_history"][0] == "2025-11-11" and sb["blocks"][7] == {"turnus": 8, "start": "21:40", "session": "night"}
+    assert r["venues"]["Bernabeu"]["active_until"] == "2026-09-21"
+    assert "Hillsborough" in r["not_collected"]
+    r = call("data_notes", {"venue": "San Siro"})
+    assert list(r["venues"]) == ["San Siro"] and all("San Siro" in e["venues"] for e in r["events"])
+
+
 def test_h2h_not_found():
     r = call("player_h2h", {"player_a": "Alpah", "player_b": "Beta"})
     assert r["sample_size"] == 0 and r["did_you_mean"]["player_a"]["suggestions"] == ["Alpha"]

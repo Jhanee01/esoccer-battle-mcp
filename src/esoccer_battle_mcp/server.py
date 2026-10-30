@@ -369,6 +369,40 @@ def player_form(
 
 
 @mcp.tool
+def data_notes(venue: Venue = None) -> dict:
+    """Context needed to interpret the data: eras (game versions), dated events (schedule changes,
+    new leagues, fixed player-team periods), venues with format and current block schedule, and the
+    turnus -> session map. Read this before analysing windows longer than a few days."""
+    if venue and venue not in SCHED.venues:
+        raise ValueError(f"Unknown venue {venue!r}. Valid values: {', '.join(SCHED.venues)}")
+    venues = {}
+    for name, v in SCHED.venues.items():
+        if venue and name != venue:
+            continue
+        latest = v["menetrend"][-1]
+        group = v["turnus_csoport"]
+        venues[name] = {
+            "format": SCHED.format_of(name),
+            "turnus_group": group,
+            "schedule_since": latest["tol"],
+            **({"active_until": latest["ig"]} if latest.get("ig") else {}),
+            "blocks": [{"turnus": int(t), "start": hhmm, "session": SCHED.session_map[group][t]}
+                       for t, hhmm in sorted(latest["turnusok"].items(), key=lambda kv: int(kv[0]))],
+            "schedule_history": [e["tol"] for e in v["menetrend"]],
+        }
+    return {
+        "eras": SCHED.eras,
+        "current_era": SCHED.current_era()["id"],
+        "events": [e for e in SCHED.events if not venue or venue in e["venues"]],
+        "venues": venues,
+        "session_map": SCHED.session_map,
+        "not_collected": sorted(SCHED.ignored_venues),
+        "time_zone": "Europe/Budapest",
+        "battle_day": "Runs from ~06:00 to ~06:00 next morning; matches after midnight belong to the previous day.",
+    }
+
+
+@mcp.tool
 def sync_status() -> dict:
     """State of the local database: freshness, coverage, unknown venues, unmatched blocks and
     the last error. Use when data freshness is in doubt or a response was marked stale."""
