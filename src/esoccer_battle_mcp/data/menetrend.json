@@ -1,6 +1,7 @@
 {
   "_leiras": "Battle blokk-menetrend pályánként, dátumhoz kötve (helyi idő, Europe/Budapest). Egy bejegyzés a 'tol' Battle-naptól érvényes a következő bejegyzésig (vagy az 'ig' napig). A 'turnusok' turnus -> blokk-kezdés. A napszakot a turnus adja (napszak_turnus). Forrás: Battle API tornák 2025-11-11-től, jóváhagyva 2026-10-30.",
   "battle_nap_kezdete": "06:30",
+  "kihagyott_palyak": ["Hillsborough"],
   "napszak_turnus": {
     "8p":     {"1": "day", "2": "day", "3": "day", "4": "day",
                "5": "afternoon", "6": "afternoon", "7": "afternoon",

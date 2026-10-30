@@ -1,0 +1,81 @@
+import pytest
+
+from esoccer_battle_mcp import api, collector, db
+from esoccer_battle_mcp.schedule import Schedule
+
+
+def tournament(tid, venue, start_utc, name_day, status=4):
+    return {"id": tid, "token_international": f"Some League {name_day}", "status_id": status,
+            "start_date": start_utc, "league": {"token_international": "Some League"},
+            "location": {"token": venue}}
+
+
+def match(mid, start_utc, p1, s1, p2, s2, status=3):
+    side = lambda n, s: {"nickname": n, "score": s, "cornerScore": 0,
+                         "team": {"token_international": n + " FC"}}
+    return {"id": mid, "date": start_utc, "status_id": status,
+            "participant1": side(p1, s1), "participant2": side(p2, s2)}
+
+
+# 2026-10-28-i Battle-nap: Wembley T1 (07:00 helyi = 06:00Z), Wembley T9 (00:20 helyi másnap),
+# egy kihagyott (Hillsborough), egy ismeretlen pálya, és egy már a következő naphoz tartozó torna
+TOURNAMENTS = {
+    "2026-10-28": [tournament(1, "Wembley", "2026-10-28T06:00:00Z", "2026-10-28"),
+                   tournament(2, "Hillsborough", "2026-10-28T08:00:00Z", "2026-10-28"),
+                   tournament(3, "New Arena", "2026-10-28T09:00:00Z", "2026-10-28")],
+    "2026-10-29": [tournament(4, "Wembley", "2026-10-28T23:20:00Z", "2026-10-28"),
+                   tournament(5, "Wembley", "2026-10-29T06:00:00Z", "2026-10-29")],
+}
+MATCHES = {
+    1: [match(11, "2026-10-28T06:00:00Z", "Alpha", 3, "Beta", 2),
+        match(12, "2026-10-28T06:12:00Z", "Gamma", 1, "Delta", 1, status=2)],   # nem befejezett
+    4: [match(41, "2026-10-28T23:20:00Z", "Alpha", 4, "Gamma", 5)],
+    5: [match(51, "2026-10-29T06:00:00Z", "Beta", 0, "Delta", 0)],
+}
+
+
+@pytest.fixture
+def fake_api(monkeypatch):
+    calls = []
+    monkeypatch.setattr(api, "tournaments_on", lambda d: TOURNAMENTS.get(d, []))
+
+    def matches_of(tid):
+        calls.append(tid)
+        return MATCHES[tid]
+    monkeypatch.setattr(api, "matches_of", matches_of)
+    return calls
+
+
+@pytest.fixture
+def conn(tmp_path):
+    return db.connect(tmp_path / "t.db")
+
+
+def test_fetch_day(conn, fake_api):
+    sched = Schedule.load()
+    stats = collector.fetch_day(conn, sched, "2026-10-28")
+    assert stats["matches"] == 2 and stats["tournaments"] == 2
+    assert sorted(fake_api) == [1, 4]                        # Hillsborough / ismeretlen / másnapi nem
+    rows = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM matches")}
+    assert set(rows) == {11, 41}
+    assert (rows[11]["turnus"], rows[11]["session"], rows[11]["local_time"]) == (1, "day", "07:00")
+    assert (rows[41]["turnus"], rows[41]["session"], rows[41]["local_date"]) == (9, "night", "2026-10-29")
+    assert rows[41]["battle_day"] == "2026-10-28"
+    assert conn.execute("SELECT venue FROM unknown_venues").fetchall()[0]["venue"] == "New Arena"
+    assert stats["complete"] is True
+
+
+def test_refetch_does_not_duplicate(conn, fake_api):
+    sched = Schedule.load()
+    collector.fetch_day(conn, sched, "2026-10-28")
+    collector.fetch_day(conn, sched, "2026-10-28")
+    assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 2
+
+
+def test_bad_api_format_is_skipped(conn, fake_api, monkeypatch):
+    broken = [{"id": 99, "date": "2026-10-28T06:00:00Z", "status_id": 3, "participant1": {}}]
+    monkeypatch.setitem(MATCHES, 1, broken)
+    stats = collector.fetch_day(conn, Schedule.load(), "2026-10-28")
+    assert stats["skipped"] == 1 and stats["complete"] is False
+    assert "unexpected API format" in db.get_meta(conn, "last_error")
+    assert conn.execute("SELECT COUNT(*) FROM matches WHERE id = 99").fetchone()[0] == 0

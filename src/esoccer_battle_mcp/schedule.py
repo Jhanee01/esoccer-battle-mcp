@@ -53,6 +53,7 @@ def battle_day(tournament_name: str | None, start_local: datetime) -> str:
 class Schedule:
     def __init__(self, menetrend: dict, eras: dict, digest: str):
         self.venues = menetrend["palyak"]
+        self.ignored_venues = set(menetrend.get("kihagyott_palyak", []))
         self.session_map = menetrend["napszak_turnus"]
         self.eras = eras["eras"]
         self.events = eras["events"]
