@@ -135,6 +135,31 @@ def test_data_notes():
     assert list(r["venues"]) == ["San Siro"] and all("San Siro" in e["venues"] for e in r["events"])
 
 
+def test_test_rule_tool():
+    r = call("test_rule", {"market": "over_under", "line": 3.5, "pick": "over", "player": "Alpha",
+                           "min_history": 1, "group_by": "none",
+                           "conditions": [{"feature": "p1_avg_total", "n": 5, "op": ">=", "value": 5}]})
+    # Alpha: 5 gól, 5 gól, majd 4 gól; a 2. és 3. meccsnél az előzmény átlaga 5 → teljesül, mindkettő over 3.5
+    assert (r["matched"], r["hits"], r["skipped_insufficient_history"]) == (2, 2, 1)
+    assert r["baseline"]["evaluated"] == 3 and r["break_even_odds"] == 1.0
+    assert r["sample_size"] == 2 and r["conditions"][0]["feature"] == "p1_avg_total"
+
+
+@pytest.mark.parametrize("args,msg", [
+    ({"market": "btts", "pick": "over"}, "pick for btts"),
+    ({"market": "over_under", "pick": "over"}, "line is required"),
+    ({"market": "btts", "pick": "yes", "conditions": []}, "At least one condition"),
+    ({"market": "btts", "pick": "yes",
+      "conditions": [{"feature": "p1_avg_total", "op": "between", "value": 5}]}, "between needs"),
+    ({"market": "btts", "pick": "yes",
+      "conditions": [{"feature": "p1_over_rate", "op": ">", "value": 50}]}, "needs a line"),
+])
+def test_test_rule_invalid(args, msg):
+    args.setdefault("conditions", [{"feature": "p1_avg_total", "op": ">", "value": 1}])
+    with pytest.raises(ToolError, match=msg):
+        call("test_rule", args)
+
+
 def test_h2h_not_found():
     r = call("player_h2h", {"player_a": "Alpah", "player_b": "Beta"})
     assert r["sample_size"] == 0 and r["did_you_mean"]["player_a"]["suggestions"] == ["Alpha"]

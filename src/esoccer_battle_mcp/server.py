@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from . import __version__, db, stats
 from .collector import Syncer, missing_days
@@ -363,6 +363,94 @@ def player_form(
             out["did_you_mean"] = _did_you_mean(conn, player=player)
             return out
         out.update(stats.player_form(rows, last_n))
+        return out
+    finally:
+        conn.close()
+
+
+class Condition(BaseModel):
+    """One pre-match condition; all conditions must hold (AND)."""
+    feature: Literal[tuple(stats.FEATURES)] = Field(description=(
+        "p1_/p2_ + avg_total | avg_scored | avg_conceded | over_rate | win_rate (the player's last n "
+        "matches before kick-off; rates in %), or h2h_avg_total | h2h_over_rate | h2h_count "
+        "(previous meetings of the two players). p1 = the subject player, or player1 without one."))
+    n: int = Field(10, ge=1, le=200, description="Window: the last n matches before kick-off")
+    op: Literal[">", ">=", "<", "<=", "between"]
+    value: float | list[float] = Field(description="Threshold, or [low, high] for between")
+    line: float | None = Field(None, description="Line for *_over_rate (defaults to the rule's line)")
+
+
+@mcp.tool
+def test_rule(
+    market: Literal["over_under", "btts", "1x2"],
+    pick: Annotated[Literal["over", "under", "yes", "no", "home", "draw", "away"],
+                    Field(description="over/under (over_under), yes/no (btts), home/draw/away (1x2; home = p1)")],
+    conditions: Annotated[list[Condition], Field(description="Pre-match conditions, all must hold")],
+    line: Annotated[float | None, Field(description="Total-goals line, required for over_under")] = None,
+    player: Annotated[str | None, Field(description="Only this player's matches; p1 is always this player")] = None,
+    history_scope: Annotated[Literal["all", "same_venue", "same_session"],
+                             Field(description="Which earlier matches feed the features")] = "all",
+    min_history: Annotated[int, Field(description="Skip a match if a feature has fewer earlier matches")] = 5,
+    group_by: Literal["none", "month", "week", "venue", "session", "turnus", "era"] = "month",
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Back-test the user's own rule on all data, point-in-time: for every match that passes the
+    filters, features are computed ONLY from matches played before it, then the conditions decide if
+    the rule fires and the market outcome is checked. Returns hit rate, break-even odds (1 / hit rate)
+    and a baseline (the same market without the conditions) plus a split for stability.
+    There are no odds in the data: tell the user to compare break_even_odds with their bookmaker's
+    odds, and flag samples under ~50 as unreliable."""
+    valid_picks = {"over_under": {"over", "under"}, "btts": {"yes", "no"}, "1x2": {"home", "draw", "away"}}
+    if pick not in valid_picks[market]:
+        raise ValueError(f"pick for {market} must be one of {sorted(valid_picks[market])}")
+    if not conditions:
+        raise ValueError("At least one condition is required (use market_stats for unconditional rates)")
+    for ln in [line] + [c.line for c in conditions]:
+        if ln is not None and (ln * 2) % 2 != 1:
+            raise ValueError("lines must end in .5, e.g. 6.5")
+    if market == "over_under" and line is None:
+        raise ValueError("line is required for over_under")
+    conds = []
+    for c in conditions:
+        if (c.op == "between") != isinstance(c.value, list) or (isinstance(c.value, list) and len(c.value) != 2):
+            raise ValueError("between needs value [low, high]; other operators need a single number")
+        if c.feature.endswith("over_rate") and (c.line or line) is None:
+            raise ValueError(f"{c.feature} needs a line")
+        conds.append(c.model_dump())
+
+    where, params, applied = _filters(since, until, last_days, venue, format, session, turnus,
+                                      time_from, time_to, era)
+    if player:
+        where += " AND (player1 = ? COLLATE NOCASE OR player2 = ? COLLATE NOCASE)"
+        params += [player, player]
+        applied["player"] = player
+    applied.update({"market": market, "pick": pick, "history_scope": history_scope,
+                    "min_history": min_history, **({"line": line} if line is not None else {})})
+    conn = db.connect()
+    try:
+        evaluate = {r[0] for r in conn.execute(f"SELECT id FROM matches WHERE {where}", params)}
+        span = conn.execute(f"SELECT MIN(battle_day), MAX(battle_day) FROM matches WHERE {where}",
+                            params).fetchone()
+        # az előzmény a teljes korszakból jön (nem csak a szűrt meccsekből), de korszakhatáron nem lép át
+        e = SCHED.era(era) if era != "all" else None
+        hist_where = "battle_day >= ?" + (" AND battle_day <= ?" if e and e.get("to") else "") if e else "1=1"
+        hist_params = ([e["from"]] + ([e["to"]] if e.get("to") else [])) if e else []
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, battle_day, local_time, venue, format, turnus, session, player1, player2,"
+            f" score1, score2 FROM matches WHERE {hist_where} ORDER BY start_utc, id", hist_params)]
+
+        def era_of(day: str) -> str:
+            return next((e["id"] for e in reversed(SCHED.eras) if e["from"] <= day), "before_first_era")
+
+        result = stats.evaluate_rule(rows, evaluate, player, conds, market, line, pick, history_scope,
+                                     max(1, min_history), group_by, era_of)
+        out = _frame(conn, applied, result["matched"], span[0], span[1])
+        if not evaluate and player:
+            out["did_you_mean"] = _did_you_mean(conn, player=player)
+        out["conditions"] = conds
+        out.update(result)
         return out
     finally:
         conn.close()

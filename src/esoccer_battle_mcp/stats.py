@@ -1,6 +1,6 @@
 """Aggregations over match rows: head-to-head, market rates, form, rule tests."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import date
 
 LINES = {"8min": [x + 0.5 for x in range(1, 13)],     # 1.5 … 12.5
@@ -123,6 +123,120 @@ def player_form(rows: list[dict], last_n: int) -> dict:
                          "turnus": r["turnus"], "team": r["a_team"], "opponent": r["b_player"],
                          "opponent_team": r["b_team"], "score": f"{r['a_goals']}-{r['b_goals']}"}
                         for r in rows[:last_n]]}
+
+
+# --- szabály-teszt (point-in-time) ---------------------------------------------
+
+PLAYER_FEATURES = {"avg_total", "avg_scored", "avg_conceded", "over_rate", "win_rate"}
+H2H_FEATURES = {"h2h_avg_total", "h2h_over_rate", "h2h_count"}
+FEATURES = sorted({f"p1_{f}" for f in PLAYER_FEATURES} | {f"p2_{f}" for f in PLAYER_FEATURES} | H2H_FEATURES)
+
+
+def _feature(name: str, n: int, line: float | None, hist_p1, hist_p2, hist_h2h, min_history: int):
+    """Egy jellemző értéke a meccs ELŐTTI előzményből; None, ha nincs elég előzmény."""
+    if name == "h2h_count":
+        return len(hist_h2h)
+    if name.startswith("h2h_"):
+        src, kind = hist_h2h, name[4:]
+    else:
+        src, kind = (hist_p1 if name.startswith("p1_") else hist_p2), name[3:]
+    recent = list(src)[-n:]
+    if len(recent) < min_history:
+        return None
+    k = len(recent)
+    if kind == "avg_total":
+        return sum(s + c for s, c in recent) / k
+    if kind == "avg_scored":
+        return sum(s for s, _ in recent) / k
+    if kind == "avg_conceded":
+        return sum(c for _, c in recent) / k
+    if kind == "over_rate":
+        return 100 * sum(s + c > line for s, c in recent) / k
+    if kind == "win_rate":
+        return 100 * sum(s > c for s, c in recent) / k
+    raise ValueError(name)
+
+
+def _holds(value: float, op: str, target) -> bool:
+    if op == "between":
+        return target[0] <= value <= target[1]
+    return {">": value > target, ">=": value >= target, "<": value < target, "<=": value <= target}[op]
+
+
+def _outcome(a: int, b: int, market: str, line: float | None, pick: str) -> bool:
+    if market == "over_under":
+        return a + b > line if pick == "over" else a + b < line
+    if market == "btts":
+        return (a > 0 and b > 0) == (pick == "yes")
+    return {"home": a > b, "draw": a == b, "away": a < b}[pick]
+
+
+def _rate_block(matched: int, hits: int) -> dict:
+    rate = pct(hits, matched)
+    return {"matched": matched, "hits": hits, "hit_rate": rate,
+            "break_even_odds": round(100 / rate, 2) if rate else None}
+
+
+def evaluate_rule(rows: list[dict], evaluate: set[int], subject: str | None, conditions: list[dict],
+              market: str, line: float | None, pick: str, history_scope: str, min_history: int,
+              group_by: str, era_of) -> dict:
+    """rows: MINDEN meccs időrendben (az előzményhez); evaluate: azok az id-k, amelyeken a szabályt
+    értékeljük. Minden meccsnél előbb a jellemzők számolódnak (csak korábbi meccsekből), és csak
+    utána kerül a meccs az előzménybe → a meccs saját eredménye nem szivároghat be."""
+    depth = max([c["n"] for c in conditions] + [min_history, 1])
+    hist = defaultdict(lambda: deque(maxlen=depth))
+
+    def scope(r):
+        return r[history_scope.removeprefix("same_")] if history_scope != "all" else None
+
+    matched = hits = skipped = base_n = base_hits = 0
+    groups = defaultdict(lambda: [0, 0])
+    examples = []
+    for r in rows:
+        p1, p2 = r["player1"], r["player2"]
+        s1, s2 = r["score1"], r["score2"]
+        if subject and p2.lower() == subject.lower():
+            p1, p2, s1, s2 = p2, p1, s2, s1
+        sc = scope(r)
+        k1, k2 = (r["format"], sc, p1.lower()), (r["format"], sc, p2.lower())
+        kp = (r["format"], sc, frozenset((p1.lower(), p2.lower())))
+        if r["id"] in evaluate:
+            hit = _outcome(s1, s2, market, line, pick)
+            base_n += 1
+            base_hits += hit
+            values, ok = {}, True
+            for c in conditions:
+                v = _feature(c["feature"], c["n"], c.get("line") or line,
+                             hist[k1], hist[k2], hist[kp], min_history)
+                if v is None:
+                    ok = None
+                    break
+                values[f"{c['feature']}(n={c['n']})"] = round(v, 2)
+                if not _holds(v, c["op"], c["value"]):
+                    ok = False
+            if ok is None:
+                skipped += 1
+            elif ok:
+                matched += 1
+                hits += hit
+                if group_by != "none":
+                    key = era_of(r["battle_day"]) if group_by == "era" else group_key(r, group_by)
+                    groups[key][0] += 1
+                    groups[key][1] += hit
+                examples.append({"battle_day": r["battle_day"], "local_time": r["local_time"],
+                                 "venue": r["venue"], "turnus": r["turnus"], "p1": p1, "p2": p2,
+                                 "score": f"{s1}-{s2}", "features": values, "hit": hit})
+        hist[k1].append((s1, s2))
+        hist[k2].append((s2, s1))
+        hist[kp].append((s1, s2))
+
+    out = {**_rate_block(matched, hits),
+           "baseline": {"evaluated": base_n, **_rate_block(base_n, base_hits)},
+           "skipped_insufficient_history": skipped,
+           "examples": examples[-20:][::-1]}
+    if group_by != "none":
+        out["groups"] = [{"group": k, **_rate_block(*v)} for k, v in sorted(groups.items())]
+    return out
 
 
 def head_to_head(rows: list[dict]) -> dict:
