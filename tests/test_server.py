@@ -85,6 +85,44 @@ def test_team_h2h_and_12min_lines():
     assert [x["line"] for x in r["over_under"]][0] == 3.5 and r["over_under"][-1]["line"] == 16.5
 
 
+def test_market_stats_player():
+    r = call("market_stats", {"market": "over_under", "line": 4.5, "player": "Alpha"})
+    assert r["sample_size"] == 3
+    assert r["overall"]["over"] == 2 and r["overall"]["under"] == 1 and r["overall"]["avg_total"] == 4.67
+    r = call("market_stats", {"market": "over_under", "line": 4.5, "player": "Alpha", "group_by": "session"})
+    assert {g["group"]: g["over"] for g in r["groups"]} == {"day": 1, "night": 1}
+    assert sum(g["sample_size"] for g in r["groups"]) == r["sample_size"]
+    r = call("market_stats", {"market": "1x2", "player": "Alpha"})
+    assert (r["overall"]["home"], r["overall"]["draw"], r["overall"]["away"]) == (2, 1, 0)
+    r = call("market_stats", {"market": "btts", "player": "Alpha", "group_by": "opponent", "min_sample": 2})
+    assert [g["group"] for g in r["groups"]] == ["Beta"] and r["groups_below_min_sample"] == 1
+
+
+def test_market_stats_without_subject():
+    r = call("market_stats", {"market": "1x2", "venue": "Anfield"})
+    assert r["overall"]["home"] == 1 and r["perspective"] == "home = player1"
+    r = call("market_stats", {"market": "over_under", "format": "8min"})
+    assert r["overall"]["lines"][0]["line"] == 1.5 and r["overall"]["avg_total"] == 4.67
+
+
+@pytest.mark.parametrize("args,msg", [
+    ({"market": "over_under", "group_by": "venue"}, "line is required"),
+    ({"market": "over_under", "line": 6.0}, "end in .5"),
+    ({"market": "btts", "group_by": "opponent"}, "needs player or team"),
+    ({"market": "btts", "player": "Alpha", "team": "Ajax"}, "either player or team"),
+])
+def test_market_stats_invalid(args, msg):
+    with pytest.raises(ToolError, match=msg):
+        call("market_stats", args)
+
+
+def test_player_form():
+    r = call("player_form", {"player": "Alpha", "last_n": 1})
+    assert r["recent"]["draws"] == 1 and r["previous"]["wins"] == 1
+    assert r["change"]["win_pct"] == -100.0
+    assert r["matches"][0]["score"] == "2-2" and r["matches"][0]["opponent"] == "Gamma"
+
+
 def test_h2h_not_found():
     r = call("player_h2h", {"player_a": "Alpah", "player_b": "Beta"})
     assert r["sample_size"] == 0 and r["did_you_mean"]["player_a"]["suggestions"] == ["Alpha"]

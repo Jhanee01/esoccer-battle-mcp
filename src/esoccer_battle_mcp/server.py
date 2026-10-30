@@ -267,6 +267,107 @@ def team_h2h(
                 ("team_a", "team_b"))
 
 
+def _subject_rows(conn, filters: tuple, player: str | None, team: str | None,
+                  opponent: str | None, limit: int | None = None) -> tuple[list[dict], dict, tuple]:
+    """Szűrt sorok az alany (játékos / csapat / nincs) szemszögéből, legújabb elöl."""
+    where, params, applied = _filters(*filters)
+    if player and team:
+        raise ValueError("Give either player or team, not both")
+    cols = ("team1", "team2") if team else ("player1", "player2")
+    subject = player or team
+    if subject:
+        c1, c2 = cols
+        if opponent:
+            where += (f" AND (({c1} = ? COLLATE NOCASE AND {c2} = ? COLLATE NOCASE)"
+                      f" OR ({c1} = ? COLLATE NOCASE AND {c2} = ? COLLATE NOCASE))")
+            params += [subject, opponent, opponent, subject]
+            applied["opponent"] = opponent
+        else:
+            where += f" AND ({c1} = ? COLLATE NOCASE OR {c2} = ? COLLATE NOCASE)"
+            params += [subject, subject]
+        applied["player" if player else "team"] = subject
+    elif opponent:
+        raise ValueError("opponent needs player or team")
+    sql = f"SELECT {ROW_COLUMNS} FROM matches WHERE {where} ORDER BY start_utc DESC"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    rows = stats.oriented([dict(r) for r in conn.execute(sql, params)], subject, cols)
+    for r in rows:
+        r["_subject"] = "player" if player else "team"
+    span = (min((r["battle_day"] for r in rows), default=None),
+            max((r["battle_day"] for r in rows), default=None))
+    return rows, applied, span
+
+
+@mcp.tool
+def market_stats(
+    market: Annotated[Literal["over_under", "btts", "1x2"], Field(description="Market to measure")],
+    line: Annotated[float | None, Field(description="Total-goals line for over_under, e.g. 6.5. "
+                                                    "Omit to get every line (only without group_by)")] = None,
+    player: Annotated[str | None, Field(description="Subject player: only their matches, 'home' = their side")] = None,
+    team: Annotated[str | None, Field(description="Subject team: only its matches, 'home' = its side")] = None,
+    opponent: Annotated[str | None, Field(description="Restrict to matches against this player/team")] = None,
+    group_by: Literal["none", "venue", "session", "turnus", "month", "week", "opponent"] = "none",
+    min_sample: Annotated[int, Field(description="Drop groups smaller than this")] = 1,
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Hit rates of a market (over/under a line, both teams to score, 1X2) for a player, a pair, a
+    team, or simply everything matching the filters (e.g. a whole venue or turnus), optionally split
+    by venue, session, turnus, month, week or opponent. Without a subject 'home' means player1."""
+    if market == "over_under" and line is None and group_by != "none":
+        raise ValueError("line is required for over_under when group_by is used")
+    if line is not None and (line * 2) % 2 != 1:
+        raise ValueError("line must end in .5, e.g. 6.5")
+    if group_by == "opponent" and not (player or team):
+        raise ValueError("group_by='opponent' needs player or team")
+    conn = db.connect()
+    try:
+        rows, applied, (lo, hi) = _subject_rows(
+            conn, (since, until, last_days, venue, format, session, turnus, time_from, time_to, era),
+            player, team, opponent)
+        applied.update({"market": market, "group_by": group_by})
+        if line is not None:
+            applied["line"] = line
+        out = _frame(conn, applied, len(rows), lo, hi)
+        if not rows:
+            out["did_you_mean"] = _did_you_mean(conn, player=player, team=team)
+            return out
+        out["perspective"] = (f"home = {player or team}" if (player or team) else "home = player1")
+        out.update(stats.market_stats(rows, market, line, group_by, max(1, min_sample)))
+        return out
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def player_form(
+    player: Annotated[str, Field(description="Player nickname")],
+    last_n: Annotated[int, Field(description="Window size: the last N matches vs the N before them")] = 20,
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Recent form of a player: the last N matches (W/D/L, goals scored/conceded, total goals, BTTS)
+    compared with the N matches before them, plus the last N match rows."""
+    last_n = max(1, min(last_n, MAX_ROWS // 2))
+    conn = db.connect()
+    try:
+        rows, applied, (lo, hi) = _subject_rows(
+            conn, (since, until, last_days, venue, format, session, turnus, time_from, time_to, era),
+            player, None, None, limit=2 * last_n)
+        applied["last_n"] = last_n
+        out = _frame(conn, applied, len(rows[:last_n]), lo, hi)
+        if not rows:
+            out["did_you_mean"] = _did_you_mean(conn, player=player)
+            return out
+        out.update(stats.player_form(rows, last_n))
+        return out
+    finally:
+        conn.close()
+
+
 @mcp.tool
 def sync_status() -> dict:
     """State of the local database: freshness, coverage, unknown venues, unmatched blocks and
