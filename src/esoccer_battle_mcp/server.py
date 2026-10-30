@@ -111,7 +111,9 @@ def _backfill(conn) -> dict:
     return {"first_day": FIRST_DAY, "days_total": total, "days_missing": len(missing),
             "progress_pct": round(100 * (total - len(missing)) / total, 1),
             "running": bool(SYNCER and SYNCER.backfill_running),
-            "sync_thread_alive": bool(SYNCER and SYNCER.thread.is_alive())}
+            "sync_thread_alive": bool(SYNCER and SYNCER.thread.is_alive()),
+            # több kliens esetén csak egy folyamat gyűjt; a többi ugyanazt az adatbázist olvassa
+            "this_process_collects": bool(SYNCER and SYNCER.is_collector)}
 
 
 def _side_filter(column_pair: tuple[str, str], value: str) -> tuple[str, list]:

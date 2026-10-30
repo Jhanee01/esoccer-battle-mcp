@@ -114,6 +114,19 @@ def test_syncer_backfills_and_stops(tmp_path, fake_api):
     assert db.get_meta(conn, "menetrend_hash") == Schedule.load().digest
 
 
+def test_only_one_process_collects(tmp_path, monkeypatch):
+    path = tmp_path / "l.db"
+    a, b = db.connect(path), db.connect(path)
+    assert collector.take_lease(a, "A") is True
+    assert collector.take_lease(b, "B") is False          # A-nál van a jog
+    assert collector.take_lease(a, "A") is True           # megújítás
+    collector.release_lease(a, "A")
+    assert collector.take_lease(b, "B") is True           # felszabadult → B átveszi
+    real = collector.time.time
+    monkeypatch.setattr(collector.time, "time", lambda: real() + collector.LEASE_S + 1)
+    assert collector.take_lease(a, "A") is True           # B jogát lejártnak látja → átveszi
+
+
 def test_bad_api_format_is_skipped(conn, fake_api, monkeypatch):
     broken = [{"id": 99, "date": "2026-10-28T06:00:00Z", "status_id": 3, "participant1": {}}]
     monkeypatch.setitem(MATCHES, 1, broken)

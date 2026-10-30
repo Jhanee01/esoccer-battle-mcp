@@ -1,5 +1,6 @@
 """Download Battle days from the API into the local database."""
 
+import os
 import sqlite3
 import threading
 import time
@@ -142,6 +143,33 @@ def missing_days(conn: sqlite3.Connection, first: str, today: str) -> list[str]:
     return out
 
 
+LEASE_S = 120      # ennyi ideig érvényes a gyűjtési jog megújítás nélkül
+
+
+def take_lease(conn: sqlite3.Connection, owner: str) -> bool:
+    """Gyűjtési jog: egyszerre csak egy szerver-folyamat gyűjt (több kliens is futhat egyszerre)."""
+    now = time.time()
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'sync_lease'").fetchone()
+        if row:
+            holder, ts = row["value"].rsplit("|", 1)
+            if holder != owner and now - float(ts) < LEASE_S:
+                return False
+        conn.execute("INSERT INTO meta(key, value) VALUES('sync_lease', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (f"{owner}|{now}",))
+        return True
+    finally:
+        conn.commit()
+
+
+def release_lease(conn: sqlite3.Connection, owner: str) -> None:
+    conn.execute("DELETE FROM meta WHERE key = 'sync_lease' AND value LIKE ?", (owner + "|%",))
+    conn.commit()
+
+
 class Syncer:
     """Háttérszál: 3 percenként friss pótlás (ma + tegnap), közben visszatöltés FIRST_DAY-ig."""
 
@@ -151,7 +179,9 @@ class Syncer:
         self.sched, self.first_day, self.connect = sched, first_day, connect
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="esoccer-battle-sync", daemon=True)
+        self.owner = f"{os.getpid()}-{id(self)}"
         self.backfill_running = False
+        self.is_collector = False
         self._last_recent = 0.0
 
     def start(self) -> None:
@@ -176,6 +206,10 @@ class Syncer:
         try:
             reclassify(conn, self.sched)
             while not self.stop.is_set():
+                self.is_collector = take_lease(conn, self.owner)
+                if not self.is_collector:          # egy másik kliens folyamata gyűjt
+                    self.stop.wait(LEASE_S / 2)
+                    continue
                 self._refresh_recent(conn)
                 todo = [d for d in missing_days(conn, self.first_day, today_battle_day())
                         if d < (date.fromisoformat(today_battle_day()) - timedelta(days=1)).isoformat()]
@@ -183,6 +217,7 @@ class Syncer:
                 for d in todo:
                     if self.stop.is_set():
                         return
+                    take_lease(conn, self.owner)
                     if time.monotonic() - self._last_recent > self.RECENT_EVERY_S:
                         self._refresh_recent(conn)
                     try:
@@ -191,6 +226,13 @@ class Syncer:
                         set_meta(conn, "last_error", f"{_now()} backfill {d} failed: {e}")
                         self.stop.wait(30)
                 self.backfill_running = False
-                self.stop.wait(max(0.0, self.RECENT_EVERY_S - (time.monotonic() - self._last_recent)))
+                # a várakozás rövidebb a jog lejáratánál, hogy közben megújítsuk
+                wait_s = max(0.0, self.RECENT_EVERY_S - (time.monotonic() - self._last_recent))
+                while wait_s > 0 and not self.stop.is_set():
+                    take_lease(conn, self.owner)
+                    step = min(wait_s, LEASE_S / 2)
+                    self.stop.wait(step)
+                    wait_s -= step
         finally:
+            release_lease(conn, self.owner)
             conn.close()
