@@ -120,6 +120,7 @@ def test_only_one_process_collects(tmp_path, monkeypatch):
     assert collector.take_lease(a, "A") is True
     assert collector.take_lease(b, "B") is False          # A-nál van a jog
     assert collector.take_lease(a, "A") is True           # megújítás
+    assert collector.renew_lease(a, "A") is True and collector.renew_lease(b, "B") is False
     collector.release_lease(a, "A")
     assert collector.take_lease(b, "B") is True           # felszabadult → B átveszi
     real = collector.time.time

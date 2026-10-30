@@ -165,6 +165,14 @@ def take_lease(conn: sqlite3.Connection, owner: str) -> bool:
         conn.commit()
 
 
+def renew_lease(conn: sqlite3.Connection, owner: str) -> bool:
+    """Megújítja a jogot, ha még nálunk van (lassú API mellett egy nap letöltése percekig tart)."""
+    n = conn.execute("UPDATE meta SET value = ? WHERE key = 'sync_lease' AND value LIKE ?",
+                     (f"{owner}|{time.time()}", owner + "|%")).rowcount
+    conn.commit()
+    return n == 1
+
+
 def release_lease(conn: sqlite3.Connection, owner: str) -> None:
     conn.execute("DELETE FROM meta WHERE key = 'sync_lease' AND value LIKE ?", (owner + "|%",))
     conn.commit()
@@ -186,6 +194,16 @@ class Syncer:
 
     def start(self) -> None:
         self.thread.start()
+        threading.Thread(target=self._heartbeat, name="esoccer-battle-lease", daemon=True).start()
+
+    def _heartbeat(self) -> None:
+        conn = self.connect()
+        try:
+            while not self.stop.wait(LEASE_S / 4):
+                if self.is_collector:
+                    self.is_collector = renew_lease(conn, self.owner)
+        finally:
+            conn.close()
 
     def close(self) -> None:
         self.stop.set()
