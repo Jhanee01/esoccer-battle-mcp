@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
 from pydantic import Field
 
-from . import __version__, db
+from . import __version__, db, stats
 from .collector import Syncer, missing_days
 from .schedule import Schedule, to_local
 
@@ -199,6 +199,72 @@ def query_matches(
         return out
     finally:
         conn.close()
+
+
+ROW_COLUMNS = ("battle_day, local_date, local_time, venue, format, turnus, session, "
+               "player1, team1, player2, team2, score1, score2, start_utc")
+
+
+def _pair_query(cols: tuple[str, str], a: str, b: str, last_n: int, filters: tuple) -> tuple:
+    where, params, applied = _filters(*filters)
+    c1, c2 = cols
+    where += (f" AND (({c1} = ? COLLATE NOCASE AND {c2} = ? COLLATE NOCASE)"
+              f" OR ({c1} = ? COLLATE NOCASE AND {c2} = ? COLLATE NOCASE))")
+    params += [a, b, b, a]
+    sql = f"SELECT {ROW_COLUMNS} FROM matches WHERE {where} ORDER BY start_utc DESC LIMIT ?"
+    return sql, params + [max(1, last_n)], applied
+
+
+def _h2h(cols, a, b, last_n, filters, keys) -> dict:
+    sql, params, applied = _pair_query(cols, a, b, last_n, filters)
+    applied.update({keys[0]: a, keys[1]: b, "last_n": last_n})
+    conn = db.connect()
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params)]
+        lo = min((r["battle_day"] for r in rows), default=None)
+        hi = max((r["battle_day"] for r in rows), default=None)
+        out = _frame(conn, applied, len(rows), lo, hi)
+        if not rows:
+            out["did_you_mean"] = _did_you_mean(conn, **{keys[0]: a, keys[1]: b})
+            return out
+        out["perspective"] = f"'a' = {a}, 'b' = {b}"
+        out.update(stats.head_to_head(stats.oriented(rows, a, cols)))
+        return out
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def player_h2h(
+    player_a: Annotated[str, Field(description="First player nickname")],
+    player_b: Annotated[str, Field(description="Second player nickname")],
+    last_n: Annotated[int, Field(description="Use the most recent N meetings")] = 50,
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Head-to-head record of two players against each other: wins/draws/losses, goal averages,
+    over/under rate per line, both-teams-to-score, split by venue and session, last 10 meetings."""
+    return _h2h(("player1", "player2"), player_a, player_b, last_n,
+                (since, until, last_days, venue, format, session, turnus, time_from, time_to, era),
+                ("player_a", "player_b"))
+
+
+@mcp.tool
+def team_h2h(
+    team_a: Annotated[str, Field(description="First team name")],
+    team_b: Annotated[str, Field(description="Second team name")],
+    last_n: Annotated[int, Field(description="Use the most recent N meetings")] = 50,
+    since: Since = None, until: Until = None, last_days: LastDays = None, venue: Venue = None,
+    format: Format = None, session: Session = None, turnus: Turnus = None,
+    time_from: TimeFrom = None, time_to: TimeTo = None, era: Era = "current",
+) -> dict:
+    """Head-to-head record of two teams regardless of who controlled them (player names are shown
+    in last_matches). Same statistics as player_h2h. Note: in some leagues players are bound to
+    teams for a period (see data_notes), then team stats effectively measure the player."""
+    return _h2h(("team1", "team2"), team_a, team_b, last_n,
+                (since, until, last_days, venue, format, session, turnus, time_from, time_to, era),
+                ("team_a", "team_b"))
 
 
 @mcp.tool

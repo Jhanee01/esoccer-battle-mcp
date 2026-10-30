@@ -63,6 +63,33 @@ def test_invalid_input_message():
         call("query_matches", {"venue": "Hillsborough"})
 
 
+def test_player_h2h():
+    r = call("player_h2h", {"player_a": "alpha", "player_b": "Beta"})
+    assert r["sample_size"] == 2
+    assert r["record"] == {"a_wins": 2, "draws": 0, "b_wins": 0,
+                           "a_win_pct": 100.0, "draw_pct": 0.0, "b_win_pct": 0.0}
+    assert r["goals"] == {"avg_total": 5.0, "avg_a": 3.5, "avg_b": 1.5}
+    ou = {x["line"]: x["over"] for x in r["over_under"]}
+    assert ou[1.5] == 2 and ou[4.5] == 2 and ou[5.5] == 0 and max(ou) == 12.5   # 8p vonalak
+    assert r["btts"]["yes"] == 2
+    assert r["by_session"]["night"]["matches"] == 1
+    assert r["last_matches"][0]["score"] == "4-1"          # Beta–Alpha 1-4, Alpha szemszögéből
+    r = call("player_h2h", {"player_a": "Alpha", "player_b": "Beta", "session": "day"})
+    assert r["sample_size"] == 1
+
+
+def test_team_h2h_and_12min_lines():
+    r = call("team_h2h", {"team_a": "Porto", "team_b": "Ajax"})
+    assert r["record"]["b_wins"] == 2 and r["last_matches"][0]["a_player"] == "Beta"
+    r = call("team_h2h", {"team_a": "Roma", "team_b": "Lazio"})
+    assert [x["line"] for x in r["over_under"]][0] == 3.5 and r["over_under"][-1]["line"] == 16.5
+
+
+def test_h2h_not_found():
+    r = call("player_h2h", {"player_a": "Alpah", "player_b": "Beta"})
+    assert r["sample_size"] == 0 and r["did_you_mean"]["player_a"]["suggestions"] == ["Alpha"]
+
+
 def test_did_you_mean():
     r = call("query_matches", {"player": "Alpah"})
     assert r["sample_size"] == 0
