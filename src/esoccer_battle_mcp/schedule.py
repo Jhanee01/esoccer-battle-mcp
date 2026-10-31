@@ -62,7 +62,9 @@ class Schedule:
     @classmethod
     def load(cls) -> "Schedule":
         raw = _read("menetrend.json")
-        return cls(json.loads(raw), json.loads(_read("eras.json")), hashlib.sha256(raw).hexdigest())
+        # sorvég-független: Windowson a git CRLF-fel, Linuxon LF-fel teszi ki ugyanazt a fájlt
+        digest = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+        return cls(json.loads(raw), json.loads(_read("eras.json")), digest)
 
     def format_of(self, venue: str) -> str | None:
         v = self.venues.get(venue)

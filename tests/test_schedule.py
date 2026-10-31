@@ -85,3 +85,11 @@ def test_notes(sched):
     assert any("2026-08-04" in n for n in notes)
     assert sched.notes_for("2026-10-20", "2026-10-28", "Wembley") == []
     assert sched.current_era()["id"] == "FC26"
+
+
+def test_digest_ignores_line_endings(monkeypatch):
+    from esoccer_battle_mcp import schedule
+    real = schedule._read
+    lf = Schedule.load().digest
+    monkeypatch.setattr(schedule, "_read", lambda n: real(n).replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert Schedule.load().digest == lf
