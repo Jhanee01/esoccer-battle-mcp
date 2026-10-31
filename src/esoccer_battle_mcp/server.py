@@ -584,7 +584,8 @@ def sync_status() -> dict:
             "snapshot": {"last_complete_day": db.get_meta(conn, "snapshot_day"),
                          "loaded_at": db.get_meta(conn, "snapshot_loaded_at")},
             "stale": _is_stale(conn),
-            "unknown_venues": [dict(r) for r in conn.execute("SELECT * FROM unknown_venues")],
+            "unknown_venues": [dict(r) for r in conn.execute("SELECT * FROM unknown_venues")
+                               if r["venue"] not in SCHED.ignored_venues],
             "unmatched_blocks": [dict(r) for r in unmatched],
             "last_sync": db.get_meta(conn, "last_sync"),
             "last_error": db.get_meta(conn, "last_error"),

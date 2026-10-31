@@ -140,7 +140,7 @@ def test_data_notes():
     sb = r["venues"]["Stamford Bridge"]
     assert sb["schedule_history"][0] == "2025-11-11" and sb["blocks"][7] == {"turnus": 8, "start": "21:40", "session": "night"}
     assert r["venues"]["Bernabeu"]["active_until"] == "2026-09-21"
-    assert "Hillsborough" in r["not_collected"]
+    assert {"Hillsborough", "Emirates Stadium"} <= set(r["not_collected"])
     r = call("data_notes", {"venue": "San Siro"})
     assert list(r["venues"]) == ["San Siro"] and all("San Siro" in e["venues"] for e in r["events"])
 

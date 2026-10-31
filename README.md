@@ -113,7 +113,8 @@ changes), so update when you are told to.
 - Results come from the public JSON API behind football.esportsbattle.com. This project is not affiliated
   with Esports Battle; the API is unofficial and may change or disappear.
 - Collected venues: Stamford Bridge, Old Trafford, Wembley, San Siro, Bernabeu (8 min) and Anfield,
-  Etihad (12 min). Hillsborough is not collected.
+  Etihad (12 min). Not collected: Hillsborough, and Emirates Stadium (a weekend-only "World Cup B"
+  special event with 2-match tournaments, 2026-06-19 – 07-26).
 - Sessions and turnus numbers come from a maintained block schedule (`data/menetrend.json`), not from clock
   hours. When the Battle changes its schedule, the next release fixes the classification.
 - Past results do not guarantee future ones. Bet responsibly, where it is legal for you.
