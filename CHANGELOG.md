@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.1 (2026-10-31)
+
+- Fix: on Windows the schedule fingerprint did not match the one in the data snapshot, because git
+  checks the schedule file out with different line endings there. The server then reclassified the
+  whole history once after the first download. The fingerprint now ignores line endings.
+
 ## v1.0.0 (2026-10-31)
 
 First public release.
