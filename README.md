@@ -161,7 +161,7 @@ to.
 - Collected venues: Stamford Bridge, Old Trafford, Wembley, San Siro, Bernabeu (8 min) and Anfield,
   Etihad (12 min). Not collected: Hillsborough, and Emirates Stadium (a weekend-only "World Cup B"
   special event with 2-match tournaments, from 2026-06-19 to 2026-07-26).
-- Session and turnus come from a block schedule maintained in this repo (`data/menetrend.json`), not
+- Session and turnus come from a block schedule maintained in this repo (`src/esoccer_battle_mcp/data/menetrend.json`), not
   from the clock. When the Battle changes its schedule, the next release fixes the classification.
 - Past results do not guarantee future ones. Bet responsibly, and only where it is legal for you.
 
