@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.2 (2026-11-04)
+
+- The server instructions now tell the assistant to answer only what was asked, using the numbers
+  the tools return: no self-computed estimates or "expected" values, no extra tool calls, context
+  or suggestions.
+
 ## v1.0.1 (2026-10-31)
 
 - Fix: on Windows the schedule fingerprint did not match the one in the data snapshot, because git

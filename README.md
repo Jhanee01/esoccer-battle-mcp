@@ -24,7 +24,7 @@ Settings → Developer → Edit Config, then add this to `claude_desktop_config.
   "mcpServers": {
     "esoccer-battle": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.1", "esoccer-battle-mcp"]
+      "args": ["--from", "git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.2", "esoccer-battle-mcp"]
     }
   }
 }
@@ -36,7 +36,7 @@ Windows, `which uvx` on macOS shows it).
 ### Claude Code
 
 ```
-claude mcp add -s user esoccer-battle -- uvx --from git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.1 esoccer-battle-mcp
+claude mcp add -s user esoccer-battle -- uvx --from git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.2 esoccer-battle-mcp
 ```
 
 ### Codex
@@ -46,7 +46,7 @@ Add this to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.esoccer-battle]
 command = "uvx"
-args = ["--from", "git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.1", "esoccer-battle-mcp"]
+args = ["--from", "git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.2", "esoccer-battle-mcp"]
 required = true
 ```
 
@@ -101,7 +101,7 @@ result is what the rule would really have done at the time, not what it looks li
 ## Updating
 
 When a new version is out, `sync_status` shows it with the release notes, and every answer carries a
-short note about it. To update, change the version in your client config (for example `@v1.0.1` →
+short note about it. To update, change the version in your client config (for example `@v1.0.2` →
 `@v1.1.0`) and restart the client. Your local data stays.
 
 Updates also bring schedule and era changes: new leagues, new block times, a new game version. Without

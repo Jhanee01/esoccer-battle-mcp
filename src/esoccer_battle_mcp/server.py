@@ -51,7 +51,11 @@ mcp = FastMCP(
         "Battle API since 2025-11-11. Use it to research and measure betting-strategy ideas. There are no "
         "odds and no tips in the data. All times are Europe/Budapest local time. A Battle day runs from "
         "~06:00 to ~06:00 next morning; 'turnus' is the block number within that day and decides the "
-        "session (day/afternoon/night). Check data_notes before analysing long windows."
+        "session (day/afternoon/night). Check data_notes before analysing long windows. "
+        "ANSWER ONLY WHAT THE USER ASKED. Report the numbers the tools return for the question and "
+        "nothing else: do not compute your own estimates, 'expected' values, models or comparisons, do "
+        "not make extra tool calls the question does not need, and do not add context, interpretation, "
+        "caveats or follow-up suggestions on your own."
     ),
 )
 
