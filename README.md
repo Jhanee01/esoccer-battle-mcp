@@ -78,6 +78,41 @@ them collects, the others read the same database.
 - "Is Ganger_29 in form? Compare their last 20 matches with the 20 before."
 - "Export every San Siro match from last week to CSV."
 
+## How it works
+
+```mermaid
+flowchart LR
+    API[Battle public JSON API] --> C[collector<br/>live sync + backfill]
+    S[(GitHub release<br/>data snapshot)] --> C
+    C --> DB[(SQLite<br/>~/.esoccer-battle-mcp/battle.db)]
+    M[schedule + eras<br/>menetrend.json, eras.json] --> Q
+    DB --> Q[stats / test_rule]
+    Q --> MCP[MCP server<br/>9 tools]
+    MCP --> CL[Claude Desktop · Claude Code · Codex]
+```
+
+Every five days a GitHub Actions workflow (`snapshot.yml`) syncs the database, builds a
+compressed snapshot and publishes it to the `data-latest` release. A new install is ready in
+seconds instead of hours.
+
+## Design decisions
+
+- **Back-tests can't see the future.** `test_rule` builds each match's features only from matches
+  that finished before its kick-off. A rule gets scored on what it could have known at the time.
+- **Tools don't wait for data.** Collection runs in the background, and every answer says how far
+  back the data goes and whether it's stale. A slow API never holds up a question.
+- **Snapshot first, API second.** On first start the server downloads a ~12 MB snapshot and fetches
+  only the days it's missing. If the snapshot can't be reached, it backfills everything from the
+  API, newest days first, so you can start asking within minutes.
+- **One collector, many readers.** Several clients can share the same SQLite file at once. A
+  short-lived lease in the database decides which one collects; the others only read, and one of
+  them takes over if the collector stops.
+- **The schedule is data.** Sessions and turnus come from a block schedule versioned in the repo,
+  not from the clock. When the league changes its schedule, a release updates the classification
+  instead of matches quietly landing in the wrong session.
+- **No tips included.** The server ships without tips, odds or strategies. It tells you how an idea
+  would have done; the idea is yours.
+
 ## Tools
 
 | Tool | What it answers |
