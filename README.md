@@ -78,6 +78,8 @@ them collects, the others read the same database.
 - "Is Ganger_29 in form? Compare their last 20 matches with the 20 before."
 - "Export every San Siro match from last week to CSV."
 
+![Asking Claude Code for a head-to-head: the server is called and the answer comes back as a table](docs/demo.gif)
+
 ## How it works
 
 ```mermaid
