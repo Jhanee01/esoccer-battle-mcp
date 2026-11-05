@@ -1,5 +1,7 @@
 # esoccer-battle-mcp
 
+[![CI](https://github.com/Jhanee01/esoccer-battle-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Jhanee01/esoccer-battle-mcp/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 An MCP server that lets Claude Desktop, Claude Code or Codex answer questions about **Esoccer Battle**
 (the EA FC esports league with 8 and 12 minute matches). It keeps a local copy of every result since
 2025-11-11 and adds new matches as they finish.
