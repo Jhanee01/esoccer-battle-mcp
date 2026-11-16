@@ -29,3 +29,5 @@ jobs:
             gh release create data-latest --prerelease --title "Data snapshot" \
               --notes "Database snapshot used on first start. Updated automatically every 5 days."
           gh release upload data-latest out/battle.db.gz out/manifest.json --clobber
+          gh release edit data-latest --title "Data snapshot – $(date -u +%F)" \
+            --notes "Database snapshot used on first start. Updated automatically every 5 days. Last update: $(date -u '+%F %H:%M') UTC."
